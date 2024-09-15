@@ -1,7 +1,7 @@
 ---
 - name: Deploy a minimal, publicly accessible EKS cluster with a basic storage class
   hosts: localhost
-  gather_facts: false
+  gather_facts: true  # We need to gather facts to detect architecture
   become: false
 
   vars:
@@ -9,6 +9,12 @@
     region: us-west-2
     node_type: t3.small
     node_count: 2
+
+    eksctl_architecture_map:
+      "x86_64": "amd64"
+      "aarch64": "arm64"
+      "arm64": "arm64"
+    eksctl_architecture: "{{ eksctl_architecture_map.get(ansible_architecture, 'amd64') }}"
 
   tasks:
     - name: Install necessary packages
@@ -31,7 +37,7 @@
       block:
         - name: Download eksctl
           get_url:
-            url: "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_{{ ansible_system | lower }}_amd64.tar.gz"
+            url: "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_{{ ansible_system | lower }}_{{ eksctl_architecture }}.tar.gz"
             dest: /tmp/eksctl.tar.gz
 
         - name: Extract eksctl
@@ -40,6 +46,12 @@
             dest: /usr/local/bin/
             remote_src: yes
             mode: '0755'
+
+        - name: Remove eksctl tarball after extraction
+          file:
+            path: /tmp/eksctl.tar.gz
+            state: absent
+          when: eksctl_check.rc != 0
 
     - name: Verify eksctl installation
       command: eksctl version
@@ -99,3 +111,8 @@
     - name: Output StorageClass creation details
       debug:
         msg: "StorageClass creation result: {{ apply_storage_class.stdout }}"
+
+    - name: Remove storage class YAML file after application
+      file:
+        path: /tmp/storage-class.yaml
+        state: absent
