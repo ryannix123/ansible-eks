@@ -6,7 +6,7 @@
 
   vars:
     cluster_name: minimal-eks-cluster
-    region: us-east-2
+    region: us-west-2
     node_type: t3.small
     node_count: 2
 
@@ -21,14 +21,25 @@
         - awscli
         - jq
 
-    - name: Install eksctl
-      command: curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
-      register: install_eksctl
-      changed_when: "'eksctl' not in ansible_facts.packages"
+    - name: Check if eksctl is installed
+      command: which eksctl
+      register: eksctl_check
+      ignore_errors: true
 
-    - name: Move eksctl to /usr/local/bin
-      command: mv /tmp/eksctl /usr/local/bin/eksctl
-      when: install_eksctl is changed
+    - name: Install eksctl if not installed
+      when: eksctl_check.rc != 0
+      block:
+        - name: Download eksctl
+          get_url:
+            url: "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_{{ ansible_system | lower }}_amd64.tar.gz"
+            dest: /tmp/eksctl.tar.gz
+
+        - name: Extract eksctl
+          unarchive:
+            src: /tmp/eksctl.tar.gz
+            dest: /usr/local/bin/
+            remote_src: yes
+            mode: '0755'
 
     - name: Verify eksctl installation
       command: eksctl version
@@ -55,7 +66,12 @@
       debug:
         msg: "EKS cluster creation result: {{ eksctl_create_cluster.stdout }}"
 
-    - name: Create a basic StorageClass YAML file
+    - name: Write kubeconfig for EKS cluster
+      command: eksctl utils write-kubeconfig --cluster={{ cluster_name }} --region={{ region }}
+      register: write_kubeconfig
+      changed_when: "'saved' in write_kubeconfig.stdout"
+
+    - name: Create a basic default StorageClass YAML file
       copy:
         dest: /tmp/storage-class.yaml
         content: |
@@ -63,6 +79,8 @@
           kind: StorageClass
           metadata:
             name: standard
+            annotations:
+              storageclass.kubernetes.io/is-default-class: "true"
           provisioner: kubernetes.io/aws-ebs
           parameters:
             type: gp2
@@ -72,9 +90,9 @@
           volumeBindingMode: WaitForFirstConsumer
 
     - name: Apply the StorageClass to the EKS cluster
-      command: kubectl apply -f /tmp/storage-class.yaml
+      command: kubectl apply --validate=false -f /tmp/storage-class.yaml
       environment:
-        KUBECONFIG: "{{ lookup('pipe', 'eksctl utils write-kubeconfig --cluster={{ cluster_name }} --region={{ region }}') }}"
+        KUBECONFIG: "{{ lookup('env', 'HOME') }}/.kube/config"
       register: apply_storage_class
       changed_when: "'created' in apply_storage_class.stdout"
 
