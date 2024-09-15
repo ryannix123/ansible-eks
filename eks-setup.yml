@@ -4,6 +4,12 @@
   gather_facts: false
   become: false
 
+  vars:
+    cluster_name: minimal-eks-cluster
+    region: us-east-2
+    node_type: t3.small
+    node_count: 2
+
   tasks:
     - name: Install necessary packages
       package:
@@ -15,6 +21,15 @@
         - awscli
         - jq
 
+    - name: Install eksctl
+      command: curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+      register: install_eksctl
+      changed_when: "'eksctl' not in ansible_facts.packages"
+
+    - name: Move eksctl to /usr/local/bin
+      command: mv /tmp/eksctl /usr/local/bin/eksctl
+      when: install_eksctl is changed
+
     - name: Verify eksctl installation
       command: eksctl version
       register: eksctl_version
@@ -25,7 +40,14 @@
         msg: "eksctl version: {{ eksctl_version.stdout }}"
 
     - name: Create minimal EKS cluster
-      command: eksctl create cluster --name minimal-eks-cluster --region us-east-2 --nodes 2 --node-type t3.small --managed --alb-ingress-access
+      command: >
+        eksctl create cluster
+        --name {{ cluster_name }}
+        --region {{ region }}
+        --nodes {{ node_count }}
+        --node-type {{ node_type }}
+        --managed
+        --alb-ingress-access
       register: eksctl_create_cluster
       changed_when: "'created' in eksctl_create_cluster.stdout"
 
@@ -52,7 +74,7 @@
     - name: Apply the StorageClass to the EKS cluster
       command: kubectl apply -f /tmp/storage-class.yaml
       environment:
-        KUBECONFIG: "{{ lookup('pipe', 'eksctl utils write-kubeconfig --cluster=minimal-eks-cluster --region=us-west-2') }}"
+        KUBECONFIG: "{{ lookup('pipe', 'eksctl utils write-kubeconfig --cluster={{ cluster_name }} --region={{ region }}') }}"
       register: apply_storage_class
       changed_when: "'created' in apply_storage_class.stdout"
 
