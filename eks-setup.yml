@@ -1,0 +1,61 @@
+---
+- name: Deploy a minimal, publicly accessible EKS cluster with a basic storage class
+  hosts: localhost
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Install necessary packages
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - curl
+        - unzip
+        - awscli
+        - jq
+
+    - name: Verify eksctl installation
+      command: eksctl version
+      register: eksctl_version
+      changed_when: false
+
+    - name: Output eksctl version
+      debug:
+        msg: "eksctl version: {{ eksctl_version.stdout }}"
+
+    - name: Create minimal EKS cluster
+      command: eksctl create cluster --name minimal-eks-cluster --region us-east-2 --nodes 2 --node-type t3.small --managed --alb-ingress-access
+      register: eksctl_create_cluster
+      changed_when: "'created' in eksctl_create_cluster.stdout"
+
+    - name: Output EKS cluster creation details
+      debug:
+        msg: "EKS cluster creation result: {{ eksctl_create_cluster.stdout }}"
+
+    - name: Create a basic StorageClass YAML file
+      copy:
+        dest: /tmp/storage-class.yaml
+        content: |
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: standard
+          provisioner: kubernetes.io/aws-ebs
+          parameters:
+            type: gp2
+            fsType: ext4
+          reclaimPolicy: Retain
+          allowVolumeExpansion: true
+          volumeBindingMode: WaitForFirstConsumer
+
+    - name: Apply the StorageClass to the EKS cluster
+      command: kubectl apply -f /tmp/storage-class.yaml
+      environment:
+        KUBECONFIG: "{{ lookup('pipe', 'eksctl utils write-kubeconfig --cluster=minimal-eks-cluster --region=us-west-2') }}"
+      register: apply_storage_class
+      changed_when: "'created' in apply_storage_class.stdout"
+
+    - name: Output StorageClass creation details
+      debug:
+        msg: "StorageClass creation result: {{ apply_storage_class.stdout }}"
