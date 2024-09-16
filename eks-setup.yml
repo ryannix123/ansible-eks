@@ -1,20 +1,32 @@
 ---
 - name: Deploy a minimal, publicly accessible EKS cluster with a basic storage class
   hosts: localhost
-  gather_facts: true  # We need to gather facts to detect architecture
+  gather_facts: true
   become: false
 
   vars:
+    # EKS cluster settings
     cluster_name: minimal-eks-cluster
     region: us-west-2
     node_type: t3.small
     node_count: 2
 
+    # eksctl architecture mapping for different systems
     eksctl_architecture_map:
       "x86_64": "amd64"
       "aarch64": "arm64"
       "arm64": "arm64"
     eksctl_architecture: "{{ eksctl_architecture_map.get(ansible_architecture, 'amd64') }}"
+
+    # Kubernetes storage class settings for gp3 volumes
+    storage_class_name: standard
+    storage_class_type: gp3  # Use gp3 for AWS EBS volume
+    storage_class_fs_type: ext4
+    storage_class_reclaim_policy: Retain
+    storage_class_allow_volume_expansion: true
+    storage_class_volume_binding_mode: WaitForFirstConsumer
+    storage_class_iops: 3000  # Default IOPS for gp3 volumes (can be customized)
+    storage_class_throughput: 125  # Default throughput in MiB/s (can be customized)
 
   tasks:
     - name: Install necessary packages
@@ -83,23 +95,25 @@
       register: write_kubeconfig
       changed_when: "'saved' in write_kubeconfig.stdout"
 
-    - name: Create a basic default StorageClass YAML file
+    - name: Create a dynamic default StorageClass YAML file for gp3
       copy:
         dest: /tmp/storage-class.yaml
         content: |
           apiVersion: storage.k8s.io/v1
           kind: StorageClass
           metadata:
-            name: standard
+            name: {{ storage_class_name }}
             annotations:
               storageclass.kubernetes.io/is-default-class: "true"
           provisioner: kubernetes.io/aws-ebs
           parameters:
-            type: gp2
-            fsType: ext4
-          reclaimPolicy: Retain
-          allowVolumeExpansion: true
-          volumeBindingMode: WaitForFirstConsumer
+            type: {{ storage_class_type }}
+            fsType: {{ storage_class_fs_type }}
+            iops: "{{ storage_class_iops }}"
+            throughput: "{{ storage_class_throughput }}"
+          reclaimPolicy: {{ storage_class_reclaim_policy }}
+          allowVolumeExpansion: {{ storage_class_allow_volume_expansion }}
+          volumeBindingMode: {{ storage_class_volume_binding_mode }}
 
     - name: Apply the StorageClass to the EKS cluster
       command: kubectl apply --validate=false -f /tmp/storage-class.yaml
