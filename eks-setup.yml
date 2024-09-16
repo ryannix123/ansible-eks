@@ -7,7 +7,7 @@
   vars:
     # EKS cluster settings
     cluster_name: minimal-eks-cluster
-    region: us-west-2
+    region: us-east-2
     node_type: t3.small
     node_count: 2
 
